@@ -28,6 +28,13 @@ import CalendarGrid from "./components/CalendarGrid";
 import TimelineView from "./components/TimelineView";
 import LoginPage from "./components/LoginPage";
 import { CalendarEvent, SidebarMenuType, ViewType, CATEGORIES } from "./types";
+import { 
+  isClientSupabaseConfigured, 
+  getClientEvents, 
+  createClientEvent, 
+  updateClientEvent, 
+  deleteClientEvent 
+} from "./lib/supabase-client";
 
 export default function App() {
   // State
@@ -119,14 +126,34 @@ export default function App() {
 
   // Fetch Supabase configuration status
   const fetchSupabaseStatus = async () => {
+    if (isClientSupabaseConfigured()) {
+      setSupabaseStatus({
+        supabaseConfigured: true,
+        url: (import.meta as any).env.VITE_SUPABASE_URL || "Connected (Client Mode)",
+        hasAnonKey: true
+      });
+      return;
+    }
+
     try {
       const response = await fetch("/api/status");
       if (response.ok) {
         const data = await response.json();
         setSupabaseStatus(data);
+      } else {
+        setSupabaseStatus({
+          supabaseConfigured: false,
+          url: null,
+          hasAnonKey: false
+        });
       }
     } catch (err) {
       console.error("Failed to fetch Supabase status:", err);
+      setSupabaseStatus({
+        supabaseConfigured: false,
+        url: null,
+        hasAnonKey: false
+      });
     }
   };
 
@@ -145,14 +172,19 @@ export default function App() {
     if (!currentUser) return;
     setLoading(true);
     try {
-      const response = await fetch("/api/events", {
-        headers: {
-          "X-User-Email": currentUser.email
-        }
-      });
-      if (!response.ok) throw new Error("Could not fetch calendar events from server");
-      const data = await response.json();
-      setEvents(data);
+      if (isClientSupabaseConfigured()) {
+        const data = await getClientEvents(currentUser.email);
+        setEvents(data);
+      } else {
+        const response = await fetch("/api/events", {
+          headers: {
+            "X-User-Email": currentUser.email
+          }
+        });
+        if (!response.ok) throw new Error("Could not fetch calendar events from server");
+        const data = await response.json();
+        setEvents(data);
+      }
       setError(null);
     } catch (err: any) {
       console.error(err);
@@ -189,21 +221,36 @@ export default function App() {
     };
 
     try {
-      const url = editingEvent ? `/api/events/${editingEvent.id}` : "/api/events";
-      const method = editingEvent ? "PUT" : "POST";
+      let savedEvent: CalendarEvent;
 
-      const response = await fetch(url, {
-        method,
-        headers: { 
-          "Content-Type": "application/json",
-          "X-User-Email": currentUser?.email || ""
-        },
-        body: JSON.stringify(payload)
-      });
+      if (isClientSupabaseConfigured()) {
+        const userEmail = currentUser?.email || "";
+        if (editingEvent) {
+          savedEvent = await updateClientEvent(editingEvent.id, payload, userEmail);
+        } else {
+          // Generate a safe unique ID if needed
+          const eventToCreate = {
+            ...payload,
+            id: payload.id || Math.random().toString(36).substring(2, 9)
+          } as CalendarEvent;
+          savedEvent = await createClientEvent(eventToCreate, userEmail);
+        }
+      } else {
+        const url = editingEvent ? `/api/events/${editingEvent.id}` : "/api/events";
+        const method = editingEvent ? "PUT" : "POST";
 
-      if (!response.ok) throw new Error("Failed to save event to database");
-      
-      const savedEvent = await response.json();
+        const response = await fetch(url, {
+          method,
+          headers: { 
+            "Content-Type": "application/json",
+            "X-User-Email": currentUser?.email || ""
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) throw new Error("Failed to save event to database");
+        savedEvent = await response.json();
+      }
 
       if (editingEvent) {
         setEvents(prev => prev.map(e => e.id === savedEvent.id ? savedEvent : e));
@@ -251,15 +298,19 @@ export default function App() {
     setEvents(prev => prev.map(e => e.id === eventId ? { ...e, status: nextStatus } : e));
 
     try {
-      const response = await fetch(`/api/events/${eventId}`, {
-        method: "PUT",
-        headers: { 
-          "Content-Type": "application/json",
-          "X-User-Email": currentUser?.email || ""
-        },
-        body: JSON.stringify({ status: nextStatus })
-      });
-      if (!response.ok) throw new Error();
+      if (isClientSupabaseConfigured()) {
+        await updateClientEvent(eventId, { status: nextStatus }, currentUser?.email || "");
+      } else {
+        const response = await fetch(`/api/events/${eventId}`, {
+          method: "PUT",
+          headers: { 
+            "Content-Type": "application/json",
+            "X-User-Email": currentUser?.email || ""
+          },
+          body: JSON.stringify({ status: nextStatus })
+        });
+        if (!response.ok) throw new Error();
+      }
       triggerToast(nextStatus === "done" ? "Task completed! 🎉" : "Task marked pending");
     } catch (err) {
       triggerToast("Status updated locally");
@@ -291,12 +342,16 @@ export default function App() {
     setTrashEvents(prev => [...prev, eventToDelete]);
 
     try {
-      await fetch(`/api/events/${eventId}`, { 
-        method: "DELETE",
-        headers: {
-          "X-User-Email": currentUser?.email || ""
-        }
-      });
+      if (isClientSupabaseConfigured()) {
+        await deleteClientEvent(eventId, currentUser?.email || "");
+      } else {
+        await fetch(`/api/events/${eventId}`, { 
+          method: "DELETE",
+          headers: {
+            "X-User-Email": currentUser?.email || ""
+          }
+        });
+      }
       triggerToast("Task moved to Trash", "info");
     } catch (err) {
       triggerToast("Moved to local Trash", "info");
@@ -316,14 +371,18 @@ export default function App() {
     setEvents(prev => [...prev, event]);
 
     try {
-      await fetch("/api/events", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "X-User-Email": currentUser?.email || ""
-        },
-        body: JSON.stringify(event)
-      });
+      if (isClientSupabaseConfigured()) {
+        await createClientEvent(event, currentUser?.email || "");
+      } else {
+        await fetch("/api/events", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "X-User-Email": currentUser?.email || ""
+          },
+          body: JSON.stringify(event)
+        });
+      }
       triggerToast("Task restored to calendar!");
     } catch (err) {
       triggerToast("Restored locally");

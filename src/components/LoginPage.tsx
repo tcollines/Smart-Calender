@@ -15,6 +15,7 @@ import {
   Inbox,
   ArrowLeft
 } from "lucide-react";
+import { isClientSupabaseConfigured, clientSignUpUser, clientSignInUser } from "../lib/supabase-client";
 
 interface LoginPageProps {
   onLoginSuccess: (user: { email: string; name: string }) => void;
@@ -52,62 +53,86 @@ export default function LoginPage({ onLoginSuccess }: LoginPageProps) {
     setLoading(true);
 
     try {
-      if (isSignUp) {
-        const response = await fetch("/api/auth/signup", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: email.trim().toLowerCase(),
-            password,
-            name: name.trim()
-          })
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.error || "Failed to create account.");
-        }
-
-        if (data.confirmationRequired) {
-          setPendingEmail(email.trim().toLowerCase());
-          setIsPendingConfirmation(true);
-        } else {
-          setSuccess("Account successfully created! Signing you in...");
-          setTimeout(() => {
-            if (data.user) {
-              onLoginSuccess(data.user);
-            }
-          }, 1000);
-        }
-      } else {
-        const response = await fetch("/api/auth/signin", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: email.trim().toLowerCase(),
-            password
-          })
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          // If the error indicates email confirmation is pending
-          if (data.error && (
-            data.error.toLowerCase().includes("confirm") || 
-            data.error.toLowerCase().includes("verify") || 
-            data.error.toLowerCase().includes("email_not_confirmed")
-          )) {
+      if (isClientSupabaseConfigured()) {
+        // Direct Client-side Supabase authentication (Perfect for Vercel/SPA)
+        if (isSignUp) {
+          const data = await clientSignUpUser(email.trim().toLowerCase(), password, name.trim());
+          if (data.confirmationRequired) {
             setPendingEmail(email.trim().toLowerCase());
             setIsPendingConfirmation(true);
-            return;
+          } else {
+            setSuccess("Account successfully created! Signing you in...");
+            setTimeout(() => {
+              if (data.user) {
+                onLoginSuccess(data.user);
+              }
+            }, 1000);
           }
-          throw new Error(data.error || "Invalid email or password.");
+        } else {
+          const data = await clientSignInUser(email.trim().toLowerCase(), password);
+          if (data.user) {
+            onLoginSuccess(data.user);
+          }
         }
+      } else {
+        // Server-side backend API auth proxy
+        if (isSignUp) {
+          const response = await fetch("/api/auth/signup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: email.trim().toLowerCase(),
+              password,
+              name: name.trim()
+            })
+          });
 
-        if (data.user) {
-          onLoginSuccess(data.user);
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(data.error || "Failed to create account.");
+          }
+
+          if (data.confirmationRequired) {
+            setPendingEmail(email.trim().toLowerCase());
+            setIsPendingConfirmation(true);
+          } else {
+            setSuccess("Account successfully created! Signing you in...");
+            setTimeout(() => {
+              if (data.user) {
+                onLoginSuccess(data.user);
+              }
+            }, 1000);
+          }
+        } else {
+          const response = await fetch("/api/auth/signin", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: email.trim().toLowerCase(),
+              password
+            })
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            // If the error indicates email confirmation is pending
+            if (data.error && (
+              data.error.toLowerCase().includes("confirm") || 
+              data.error.toLowerCase().includes("verify") || 
+              data.error.toLowerCase().includes("email_not_confirmed")
+            )) {
+              setPendingEmail(email.trim().toLowerCase());
+              setIsPendingConfirmation(true);
+              return;
+            }
+            throw new Error(data.error || "Invalid email or password.");
+          }
+
+          if (data.user) {
+            onLoginSuccess(data.user);
+          }
         }
       }
     } catch (err: any) {
