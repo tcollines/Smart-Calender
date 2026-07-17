@@ -1,0 +1,6 @@
+{
+  "name": "Calendar",
+  "description": "A minimalist, premium calendar workspace featuring standard month, week, and year views, with custom schedule timelines and task tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
